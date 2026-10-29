@@ -1,7 +1,8 @@
 import unittest
 
-from doc_ranker import rank_datasets
+from doc_ranker import compare_classifiers, load_labeled_dataset, rank_datasets
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 class RankDatasetsTests(unittest.TestCase):
     def test_ranks_most_relevant_dataset_first(self):
@@ -30,6 +31,43 @@ class RankDatasetsTests(unittest.TestCase):
 
         self.assertEqual(results[0]["score"], 0.0)
         self.assertEqual(results[1]["score"], 0.0)
+
+
+class ClassifierComparisonTests(unittest.TestCase):
+    def test_compare_classifiers_returns_metrics_for_all_models(self):
+        texts = [
+            "apple red fruit",
+            "banana yellow fruit",
+            "grape sweet fruit",
+            "orange citrus fruit",
+            "car road engine",
+            "truck diesel road",
+            "bus city vehicle",
+            "train rail vehicle",
+        ]
+        labels = ["fruit", "fruit", "fruit", "fruit", "vehicle", "vehicle", "vehicle", "vehicle"]
+
+        results = compare_classifiers(texts, labels, test_size=0.25, random_state=1)
+
+        self.assertEqual(set(results.keys()), {"knn", "svm", "naive_bayes"})
+        for model_name in results:
+            self.assertIn("accuracy", results[model_name])
+            self.assertIn("report", results[model_name])
+            self.assertIn("predictions", results[model_name])
+            self.assertGreaterEqual(results[model_name]["accuracy"], 0.0)
+            self.assertLessEqual(results[model_name]["accuracy"], 1.0)
+
+    def test_load_labeled_dataset_extracts_label_from_filename_suffix(self):
+        with TemporaryDirectory() as temp_dir:
+            first = Path(temp_dir) / "doc_a_class1.txt"
+            second = Path(temp_dir) / "doc_b_class2.txt"
+            first.write_text("alpha", encoding="utf-8")
+            second.write_text("beta", encoding="utf-8")
+
+            texts, labels = load_labeled_dataset(temp_dir)
+
+            self.assertEqual(texts, ["alpha", "beta"])
+            self.assertEqual(labels, ["class1", "class2"])
 
 
 if __name__ == "__main__":

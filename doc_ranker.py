@@ -5,6 +5,25 @@ import math
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Any
+
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics import accuracy_score, classification_report
+    from sklearn.model_selection import train_test_split
+    from sklearn.naive_bayes import MultinomialNB
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.pipeline import make_pipeline
+    from sklearn.svm import SVC
+except ImportError:  # pragma: no cover - handled at runtime in helper function
+    TfidfVectorizer = None
+    accuracy_score = None
+    classification_report = None
+    train_test_split = None
+    MultinomialNB = None
+    KNeighborsClassifier = None
+    make_pipeline = None
+    SVC = None
 
 TOKEN_PATTERN = re.compile(r"\b\w+\b")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -81,6 +100,96 @@ def rank_dataset_directory(directory: str | Path, query: str, top_k: int | None 
         result["filename"] = paths[index].name
 
     return ranked
+
+
+def _require_sklearn() -> None:
+    if not all(
+        [
+            TfidfVectorizer,
+            accuracy_score,
+            classification_report,
+            train_test_split,
+            MultinomialNB,
+            KNeighborsClassifier,
+            make_pipeline,
+            SVC,
+        ]
+    ):
+        raise ImportError(
+            "scikit-learn is required for classifier comparison. Install it with "
+            "`pip install scikit-learn`."
+        )
+
+
+def load_labeled_dataset(directory: str | Path) -> tuple[list[str], list[str]]:
+    texts: list[str] = []
+    labels: list[str] = []
+
+    for path in sorted(Path(directory).glob("*.txt")):
+        texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        stem_parts = path.stem.rsplit("_", maxsplit=1)
+        label = stem_parts[-1] if len(stem_parts) == 2 else path.stem
+        labels.append(label)
+
+    return texts, labels
+
+
+def compare_classifiers(
+    texts: list[str],
+    labels: list[str],
+    test_size: float = 0.3,
+    random_state: int = 42,
+) -> dict[str, dict[str, Any]]:
+    _require_sklearn()
+
+    if len(texts) != len(labels):
+        raise ValueError("texts and labels must have the same length.")
+    if len(texts) < 2:
+        raise ValueError("At least two labeled documents are required.")
+    if len(set(labels)) < 2:
+        raise ValueError("At least two classes are required for comparison.")
+
+    x_train, x_test, y_train, y_test = train_test_split(
+        texts,
+        labels,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=labels,
+    )
+
+    knn_neighbors = max(1, min(5, len(y_train)))
+    models = {
+        "knn": KNeighborsClassifier(n_neighbors=knn_neighbors),
+        "svm": SVC(kernel="linear", random_state=random_state),
+        "naive_bayes": MultinomialNB(),
+    }
+
+    results: dict[str, dict[str, Any]] = {}
+    for model_name, model in models.items():
+        pipeline = make_pipeline(TfidfVectorizer(), model)
+        pipeline.fit(x_train, y_train)
+        predictions = pipeline.predict(x_test)
+        results[model_name] = {
+            "accuracy": accuracy_score(y_test, predictions),
+            "report": classification_report(y_test, predictions, zero_division=0),
+            "predictions": list(predictions),
+        }
+
+    return results
+
+
+def compare_classifiers_in_directory(
+    directory: str | Path,
+    test_size: float = 0.3,
+    random_state: int = 42,
+) -> dict[str, dict[str, Any]]:
+    texts, labels = load_labeled_dataset(directory)
+    return compare_classifiers(
+        texts=texts,
+        labels=labels,
+        test_size=test_size,
+        random_state=random_state,
+    )
 
 
 if __name__ == "__main__":
